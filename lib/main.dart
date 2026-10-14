@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:telephony/telephony.dart';
-import 'package:csv/csv.dart';
-import 'package:share_plus/share_plus.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,7 +16,7 @@ class ExpenseTrackerApp extends StatefulWidget {
 class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
   String currentLang = 'en';
   MaterialColor currentThemeColor = Colors.blue;
-  bool isLocked = true; // Security PIN lock state
+  bool isLocked = true;
 
   void toggleLanguage() {
     setState(() {
@@ -60,7 +58,7 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
   }
 }
 
-// --- 1. PIN SECURITY LOCK SCREEN ---
+// --- PIN SECURITY LOCK SCREEN ---
 class PinLockScreen extends StatefulWidget {
   final VoidCallback onUnlock;
   final String currentLang;
@@ -73,7 +71,7 @@ class PinLockScreen extends StatefulWidget {
 
 class _PinLockScreenState extends State<PinLockScreen> {
   String enteredPin = "";
-  final String correctPin = "1234"; // Default PIN is 1234
+  final String correctPin = "1234";
 
   void _onDigitPress(String digit) {
     if (enteredPin.length < 4) {
@@ -125,7 +123,6 @@ class _PinLockScreenState extends State<PinLockScreen> {
               }),
             ),
             const SizedBox(height: 40),
-            // Keypad
             for (var row in [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['', '0', 'C']])
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -198,7 +195,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'month': 'Month',
       'empty': 'No UPI/Debit SMS found.\n(Auto-reading active)',
       'totalSpent': 'Total Spent: Rs. ',
-      'export': 'Export Report',
       'theme': 'Change Theme',
     },
     'hi': {
@@ -208,7 +204,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'month': 'महीना',
       'empty': 'कोई यूपीआई एसएमएस नहीं मिला।\n(ऑटो-रीडिंग चालू है)',
       'totalSpent': 'कुल खर्चा: रु. ',
-      'export': 'रिपोर्ट एक्सपोर्ट करें',
       'theme': 'थीम बदलें',
     },
   };
@@ -285,18 +280,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return total;
   }
 
-  // --- 3. EXPORT TO CSV / EXCEL / PDF FUNCTION ---
-  void exportData() {
-    List<List<dynamic>> rows = [];
-    rows.add(["Date", "Amount", "Message"]);
-    for (var tx in allTransactions) {
-      rows.add([tx.date.toString(), tx.amount, tx.message]);
-    }
-    String csvData = const ListToCsvConverter().convert(rows);
-    Share.share(csvData, subject: 'Expense_Report.csv');
-  }
-
-  // --- THEME PICKER DIALOG ---
   void showThemeDialog() {
     showDialog(
       context: context,
@@ -342,25 +325,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         title: Text(t['title']!),
         foregroundColor: Colors.white,
         actions: [
-          // Theme button
           IconButton(
             icon: const Icon(Icons.color_lens),
             onPressed: showThemeDialog,
             tooltip: t['theme'],
           ),
-          // Export button
-          IconButton(
-            icon: const Icon(Icons.download),
-            onPressed: exportData,
-            tooltip: t['export'],
-          ),
-          // Lock button
           IconButton(
             icon: const Icon(Icons.lock),
             onPressed: widget.onLockApp,
             tooltip: 'Lock App',
           ),
-          // Language toggle
           TextButton.icon(
             onPressed: widget.onToggleLanguage,
             icon: const Icon(Icons.language, color: Colors.white),
