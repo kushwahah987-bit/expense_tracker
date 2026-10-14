@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:telephony/telephony.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -183,8 +182,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
-  final Telephony telephony = Telephony.instance;
-  List<TransactionItem> allTransactions = [];
+  List<TransactionItem> allTransactions = [
+    TransactionItem(message: "Paid Rs. 250 to Grocery via UPI", amount: 250.0, date: DateTime.now()),
+    TransactionItem(message: "Debited Rs. 1200 for Fuel", amount: 1200.0, date: DateTime.now().subtract(const Duration(days: 2))),
+  ];
   late TabController _tabController;
 
   final Map<String, Map<String, String>> localizedText = {
@@ -193,18 +194,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'day': 'Day',
       'week': 'Week',
       'month': 'Month',
-      'empty': 'No UPI/Debit SMS found.\n(Auto-reading active)',
+      'empty': 'No transactions found.',
       'totalSpent': 'Total Spent: Rs. ',
       'theme': 'Change Theme',
+      'add': 'Add SMS',
     },
     'hi': {
       'title': 'यूपीआई खर्च ट्रैकर',
       'day': 'दिन',
       'week': 'हफ्ता',
       'month': 'महीना',
-      'empty': 'कोई यूपीआई एसएमएस नहीं मिला।\n(ऑटो-रीडिंग चालू है)',
+      'empty': 'कोई लेन-देन नहीं मिला।',
       'totalSpent': 'कुल खर्चा: रु. ',
       'theme': 'थीम बदलें',
+      'add': 'एसएमएस जोड़ें',
     },
   };
 
@@ -212,51 +215,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    initSMSListener();
   }
 
-  void initSMSListener() async {
-    bool? permissionsGranted = await telephony.requestPhoneAndSmsPermissions;
-    if (permissionsGranted ?? false) {
-      telephony.listenIncomingSms(
-        onNewMessage: (SmsMessage message) {
-          processMessage(message.body ?? "", message.date != null ? DateTime.fromMillisecondsSinceEpoch(message.date!) : DateTime.now());
-        },
-        listenInBackground: true,
+  void addSampleTransaction() {
+    setState(() {
+      allTransactions.insert(
+        0,
+        TransactionItem(
+          message: "Spent Rs. 450 via UPI on Restaurant",
+          amount: 450.0,
+          date: DateTime.now(),
+        ),
       );
-
-      List<SmsMessage> messages = await telephony.getInboxMessages(
-        columns: [SmsColumn.BODY, SmsColumn.DATE],
-      );
-
-      for (var msg in messages) {
-        DateTime msgDate = msg.date != null ? DateTime.fromMillisecondsSinceEpoch(msg.date!) : DateTime.now();
-        processMessage(msg.body ?? "", msgDate);
-      }
-    }
-  }
-
-  void processMessage(String body, DateTime date) {
-    String lowerBody = body.toLowerCase();
-    if (lowerBody.contains('debited') || lowerBody.contains('spent') || lowerBody.contains('paid') || lowerBody.contains('sent') || lowerBody.contains('rs.') || lowerBody.contains('inr')) {
-      double extractedAmount = extractAmount(body);
-      setState(() {
-        if (!allTransactions.any((tx) => tx.message == body)) {
-          allTransactions.insert(0, TransactionItem(message: body, amount: extractedAmount, date: date));
-        }
-      });
-    }
-  }
-
-  double extractAmount(String text) {
-    try {
-      RegExp regExp = RegExp(r'(?:rs\.?|inr)\s*([\d,]+\.?\d*)', caseSensitive: false);
-      Match? match = regExp.firstMatch(text);
-      if (match != null && match.group(1) != null) {
-        return double.parse(match.group(1)!.replaceAll(',', ''));
-      }
-    } catch (_) {}
-    return 0.0;
+    });
   }
 
   List<TransactionItem> getFilteredTransactions(int tabIndex) {
@@ -363,6 +334,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           buildTransactionView(getFilteredTransactions(1), t),
           buildTransactionView(getFilteredTransactions(2), t),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: addSampleTransaction,
+        icon: const Icon(Icons.add),
+        label: Text(t['add']!),
       ),
     );
   }
