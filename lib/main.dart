@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:telephony/telephony.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,8 +17,23 @@ class ExpenseTrackerApp extends StatefulWidget {
 
 class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
   String currentLang = 'en';
-  MaterialColor currentThemeColor = Colors.blue;
+  bool isLoggedIn = false;
   bool isLocked = true;
+  ThemeMode themeMode = ThemeMode.system;
+
+  @override
+  void initState() {
+    super.initState();
+    checkLoginStatus();
+  }
+
+  void checkLoginStatus() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? phone = prefs.getString('user_mobile');
+    setState(() {
+      isLoggedIn = phone != null && phone.isNotEmpty;
+    });
+  }
 
   void toggleLanguage() {
     setState(() {
@@ -23,41 +41,139 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
     });
   }
 
-  void changeTheme(MaterialColor color) {
+  void toggleTheme(ThemeMode mode) async {
     setState(() {
-      currentThemeColor = color;
+      themeMode = mode;
     });
-  }
-
-  void unlockApp() {
-    setState(() {
-      isLocked = false;
-    });
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    prefs.setString('themeMode', mode == ThemeMode.dark ? 'dark' : (mode == ThemeMode.light ? 'light' : 'system'));
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Expense Tracker',
-      theme: ThemeData(
-        primarySwatch: currentThemeColor,
-        useMaterial3: true,
-      ),
-      home: isLocked
-          ? PinLockScreen(onUnlock: unlockApp, currentLang: currentLang)
-          : HomeScreen(
+      title: 'UPI Expense Tracker',
+      theme: ThemeData.light(useMaterial3: true),
+      darkTheme: ThemeData.dark(useMaterial3: true),
+      themeMode: themeMode,
+      home: !isLoggedIn
+          ? LoginScreen(
+              onLoginSuccess: () => setState(() => isLoggedIn = true),
               currentLang: currentLang,
-              onToggleLanguage: toggleLanguage,
-              currentThemeColor: currentThemeColor,
-              onChangeTheme: changeTheme,
-              onLockApp: () => setState(() => isLocked = true),
-            ),
+              onToggleLang: toggleLanguage,
+            )
+          : isLocked
+              ? PinLockScreen(
+                  onUnlock: () => setState(() => isLocked = false),
+                  currentLang: currentLang,
+                )
+              : HomeScreen(
+                  currentLang: currentLang,
+                  onToggleLanguage: toggleLanguage,
+                  onLockApp: () => setState(() => isLocked = true),
+                  currentThemeMode: themeMode,
+                  onChangeTheme: toggleTheme,
+                  onLogout: () async {
+                    SharedPreferences prefs = await SharedPreferences.getInstance();
+                    prefs.remove('user_mobile');
+                    setState(() {
+                      isLoggedIn = false;
+                    });
+                  },
+                ),
     );
   }
 }
 
-// --- PIN SECURITY LOCK SCREEN ---
+// --- MOBILE NUMBER LOGIN SCREEN ---
+class LoginScreen extends StatefulWidget {
+  final VoidCallback onLoginSuccess;
+  final String currentLang;
+  final VoidCallback onToggleLang;
+
+  const LoginScreen({Key? key, required this.onLoginSuccess, required this.currentLang, required this.onToggleLang}) : super(key: key);
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController phoneController = TextEditingController();
+
+  void handleLogin() async {
+    String phone = phoneController.text.trim();
+    if (phone.length == 10) {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      prefs.setString('user_mobile', phone);
+      widget.onLoginSuccess();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(widget.currentLang == 'en' ? 'Enter a valid 10-digit mobile number' : 'कृपया 10 अंकों का वैध मोबाइल नंबर दर्ज करें')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    bool isEn = widget.currentLang == 'en';
+    return Scaffold(
+      appBar: AppBar(
+        actions: [
+          TextButton.icon(
+            onPressed: widget.onToggleLang,
+            icon: const Icon(Icons.language),
+            label: Text(isEn ? 'हिन्दी' : 'English'),
+          )
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.account_balance_wallet, size: 80, color: Colors.blueAccent),
+            const SizedBox(height: 20),
+            Text(
+              isEn ? 'UPI Expense Tracker Login' : 'यूपीआई खर्च ट्रैकर लॉगिन',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              isEn ? 'Enter your mobile number to auto-detect UPI SMS' : 'यूपीआई एसएमएस स्वतः पढ़ने के लिए अपना मोबाइल नंबर दर्ज करें',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 30),
+            TextField(
+              controller: phoneController,
+              keyboardType: TextInputType.phone,
+              maxLength: 10,
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.phone),
+                labelText: isEn ? 'Mobile Number' : 'मोबाइल नंबर',
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                onPressed: handleLogin,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
+                textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                child: Text(isEn ? 'Continue' : 'आगे बढ़ें'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- PIN LOCK SCREEN ---
 class PinLockScreen extends StatefulWidget {
   final VoidCallback onUnlock;
   final String currentLang;
@@ -70,7 +186,20 @@ class PinLockScreen extends StatefulWidget {
 
 class _PinLockScreenState extends State<PinLockScreen> {
   String enteredPin = "";
-  final String correctPin = "1234";
+  String savedPin = "1234";
+
+  @override
+  void initState() {
+    super.initState();
+    loadSavedPin();
+  }
+
+  void loadSavedPin() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      savedPin = prefs.getString('user_pin') ?? "1234";
+    });
+  }
 
   void _onDigitPress(String digit) {
     if (enteredPin.length < 4) {
@@ -78,11 +207,11 @@ class _PinLockScreenState extends State<PinLockScreen> {
         enteredPin += digit;
       });
       if (enteredPin.length == 4) {
-        if (enteredPin == correctPin) {
+        if (enteredPin == savedPin) {
           widget.onUnlock();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Incorrect PIN! Try 1234')),
+            SnackBar(content: Text(widget.currentLang == 'en' ? 'Incorrect PIN!' : 'गलत पिन!')),
           );
           setState(() {
             enteredPin = "";
@@ -95,7 +224,6 @@ class _PinLockScreenState extends State<PinLockScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -103,8 +231,8 @@ class _PinLockScreenState extends State<PinLockScreen> {
             const Icon(Icons.lock, size: 60, color: Colors.blueAccent),
             const SizedBox(height: 20),
             Text(
-              widget.currentLang == 'en' ? 'Enter 4-Digit PIN (Default: 1234)' : '4-अंकों का पिन दर्ज करें (Default: 1234)',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              widget.currentLang == 'en' ? 'Enter 4-Digit PIN (Default: 1234)' : '4-अंकों का पिन दर्ज करें',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 20),
             Row(
@@ -116,7 +244,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
                   height: 20,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: index < enteredPin.length ? Colors.blueAccent : Colors.grey.shade300,
+                    color: index < enteredPin.length ? Colors.blueAccent : Colors.grey.shade400,
                   ),
                 );
               }),
@@ -156,25 +284,37 @@ class _PinLockScreenState extends State<PinLockScreen> {
 class TransactionItem {
   final String message;
   final double amount;
-  final DateTime date;
+  final String dateStr;
 
-  TransactionItem({required this.message, required this.amount, required this.date});
+  TransactionItem({required this.message, required this.amount, required this.dateStr});
+
+  Map<String, dynamic> toJson() => {'message': message, 'amount': amount, 'dateStr': dateStr};
+
+  factory TransactionItem.fromJson(Map<String, dynamic> json) {
+    return TransactionItem(
+      message: json['message'],
+      amount: json['amount'],
+      dateStr: json['dateStr'],
+    );
+  }
 }
 
 class HomeScreen extends StatefulWidget {
   final String currentLang;
   final VoidCallback onToggleLanguage;
-  final MaterialColor currentThemeColor;
-  final Function(MaterialColor) onChangeTheme;
   final VoidCallback onLockApp;
+  final ThemeMode currentThemeMode;
+  final Function(ThemeMode) onChangeTheme;
+  final VoidCallback onLogout;
 
   const HomeScreen({
     Key? key,
     required this.currentLang,
     required this.onToggleLanguage,
-    required this.currentThemeColor,
-    required this.onChangeTheme,
     required this.onLockApp,
+    required this.currentThemeMode,
+    required this.onChangeTheme,
+    required this.onLogout,
   }) : super(key: key);
 
   @override
@@ -182,10 +322,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
-  List<TransactionItem> allTransactions = [
-    TransactionItem(message: "Paid Rs. 250 to Grocery via UPI", amount: 250.0, date: DateTime.now()),
-    TransactionItem(message: "Debited Rs. 1200 for Fuel", amount: 1200.0, date: DateTime.now().subtract(const Duration(days: 2))),
-  ];
+  final Telephony telephony = Telephony.instance;
+  List<TransactionItem> allTransactions = [];
   late TabController _tabController;
 
   final Map<String, Map<String, String>> localizedText = {
@@ -194,20 +332,24 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'day': 'Day',
       'week': 'Week',
       'month': 'Month',
-      'empty': 'No transactions found.',
+      'empty': 'No UPI transactions found.',
       'totalSpent': 'Total Spent: Rs. ',
-      'theme': 'Change Theme',
-      'add': 'Add SMS',
+      'settings': 'Settings',
+      'changePin': 'Change PIN',
+      'themeTitle': 'Theme Mode',
+      'logout': 'Logout',
     },
     'hi': {
       'title': 'यूपीआई खर्च ट्रैकर',
       'day': 'दिन',
       'week': 'हफ्ता',
       'month': 'महीना',
-      'empty': 'कोई लेन-देन नहीं मिला।',
+      'empty': 'कोई यूपीआई लेन-देन नहीं मिला।',
       'totalSpent': 'कुल खर्चा: रु. ',
-      'theme': 'थीम बदलें',
-      'add': 'एसएमएस जोड़ें',
+      'settings': 'सेटिंग्स',
+      'changePin': 'पिन बदलें',
+      'themeTitle': 'थीम मोड',
+      'logout': 'लॉग आउट',
     },
   };
 
@@ -215,30 +357,173 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    loadSavedTransactions();
+    initSmsListener();
   }
 
-  void addSampleTransaction() {
-    setState(() {
-      allTransactions.insert(
-        0,
-        TransactionItem(
-          message: "Spent Rs. 450 via UPI on Restaurant",
-          amount: 450.0,
-          date: DateTime.now(),
-        ),
+  void loadSavedTransactions() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? dataString = prefs.getString('transactions_list');
+    if (dataString != null) {
+      List decoded = jsonDecode(dataString);
+      setState(() {
+        allTransactions = decoded.map((item) => TransactionItem.fromJson(item)).toList();
+      });
+    }
+  }
+
+  void saveTransactionsToDisk() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String encoded = jsonEncode(allTransactions.map((tx) => tx.toJson()).toList());
+    prefs.setString('transactions_list', encoded);
+  }
+
+  void initSmsListener() async {
+    bool? permissionsGranted = await telephony.requestPhoneAndSmsPermissions;
+    if (permissionsGranted ?? false) {
+      telephony.listenIncomingSms(
+        onNewMessage: (SmsMessage message) {
+          processSms(message.body ?? "");
+        },
+        listenInBackground: true,
       );
-    });
+
+      List<SmsMessage> messages = await telephony.getInboxMessages(columns: [SmsColumn.BODY, SmsColumn.DATE]);
+      for (var msg in messages) {
+        processSms(msg.body ?? "");
+      }
+    }
+  }
+
+  void processSms(String body) {
+    String lower = body.toLowerCase();
+    if (lower.contains('debited') || lower.contains('spent') || lower.contains('paid') || lower.contains('sent')) {
+      double amt = extractAmount(body);
+      if (amt > 0) {
+        String todayDate = DateTime.now().toIso8601String();
+        bool exists = allTransactions.any((tx) => tx.message == body);
+        if (!exists) {
+          setState(() {
+            allTransactions.insert(0, TransactionItem(message: body, amount: amt, dateStr: todayDate));
+          });
+          saveTransactionsToDisk();
+        }
+      }
+    }
+  }
+
+  double extractAmount(String text) {
+    try {
+      RegExp regExp = RegExp(r'(?:rs\.?|inr)\s*([\d,]+\.?\d*)', caseSensitive: false);
+      Match? match = regExp.firstMatch(text);
+      if (match != null && match.group(1) != null) {
+        return double.parse(match.group(1)!.replaceAll(',', ''));
+      }
+    } catch (_) {}
+    return 0.0;
+  }
+
+  void showChangePinDialog() {
+    TextEditingController oldPinController = TextEditingController();
+    TextEditingController newPinController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(widget.currentLang == 'en' ? 'Change PIN' : 'पिन बदलें'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: oldPinController, decoration: const InputDecoration(hintText: 'Old PIN'), obscureText: true),
+              TextField(controller: newPinController, decoration: const InputDecoration(hintText: 'New 4-Digit PIN'), obscureText: true, maxLength: 4),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                SharedPreferences prefs = await SharedPreferences.getInstance();
+                String currentSavedPin = prefs.getString('user_pin') ?? '1234';
+                if (oldPinController.text == currentSavedPin && newPinController.text.length == 4) {
+                  prefs.setString('user_pin', newPinController.text);
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('PIN Changed Successfully!')));
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid PIN details!')));
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void showSettingsDialog() {
+    var t = localizedText[widget.currentLang]!;
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(t['settings']!),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.lock_reset),
+                title: Text(t['changePin']!),
+                onTap: () {
+                  Navigator.pop(context);
+                  showChangePinDialog();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.logout, color: Colors.red),
+                title: Text(t['logout']!, style: const TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  widget.onLogout();
+                },
+              ),
+              const Divider(),
+              Text(t['themeTitle']!, style: const TextStyle(fontWeight: FontWeight.bold)),
+              RadioListTile<ThemeMode>(
+                title: const Text('System Default'),
+                value: ThemeMode.system,
+                groupValue: widget.currentThemeMode,
+                onChanged: (val) { widget.onChangeTheme(val!); Navigator.pop(context); },
+              ),
+              RadioListTile<ThemeMode>(
+                title: const Text('Light Mode'),
+                value: ThemeMode.light,
+                groupValue: widget.currentThemeMode,
+                onChanged: (val) { widget.onChangeTheme(val!); Navigator.pop(context); },
+              ),
+              RadioListTile<ThemeMode>(
+                title: const Text('Dark Mode'),
+                value: ThemeMode.dark,
+                groupValue: widget.currentThemeMode,
+                onChanged: (val) { widget.onChangeTheme(val!); Navigator.pop(context); },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   List<TransactionItem> getFilteredTransactions(int tabIndex) {
     DateTime now = DateTime.now();
     return allTransactions.where((tx) {
+      DateTime txDate = DateTime.parse(tx.dateStr);
       if (tabIndex == 0) {
-        return tx.date.year == now.year && tx.date.month == now.month && tx.date.day == now.day;
+        return txDate.year == now.year && txDate.month == now.month && txDate.day == now.day;
       } else if (tabIndex == 1) {
-        return now.difference(tx.date).inDays <= 7;
+        return now.difference(txDate).inDays <= 7;
       } else {
-        return tx.date.year == now.year && tx.date.month == now.month;
+        return txDate.year == now.year && txDate.month == now.month;
       }
     }).toList();
   }
@@ -251,42 +536,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return total;
   }
 
-  void showThemeDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(localizedText[widget.currentLang]!['theme']!),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const CircleAvatar(backgroundColor: Colors.blue),
-                title: const Text('Blue Theme'),
-                onTap: () { widget.onChangeTheme(Colors.blue); Navigator.pop(context); },
-              ),
-              ListTile(
-                leading: const CircleAvatar(backgroundColor: Colors.green),
-                title: const Text('Green Theme'),
-                onTap: () { widget.onChangeTheme(Colors.green); Navigator.pop(context); },
-              ),
-              ListTile(
-                leading: const CircleAvatar(backgroundColor: Colors.purple),
-                title: const Text('Purple Theme'),
-                onTap: () { widget.onChangeTheme(Colors.purple); Navigator.pop(context); },
-              ),
-              ListTile(
-                leading: const CircleAvatar(backgroundColor: Colors.red),
-                title: const Text('Red Theme'),
-                onTap: () { widget.onChangeTheme(Colors.red); Navigator.pop(context); },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     var t = localizedText[widget.currentLang]!;
@@ -294,32 +543,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return Scaffold(
       appBar: AppBar(
         title: Text(t['title']!),
-        foregroundColor: Colors.white,
         actions: [
           IconButton(
-            icon: const Icon(Icons.color_lens),
-            onPressed: showThemeDialog,
-            tooltip: t['theme'],
+            icon: const Icon(Icons.settings),
+            onPressed: showSettingsDialog,
           ),
           IconButton(
             icon: const Icon(Icons.lock),
             onPressed: widget.onLockApp,
-            tooltip: 'Lock App',
           ),
           TextButton.icon(
             onPressed: widget.onToggleLanguage,
-            icon: const Icon(Icons.language, color: Colors.white),
-            label: Text(
-              widget.currentLang == 'en' ? 'हिन्दी' : 'English',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
+            icon: const Icon(Icons.language),
+            label: Text(widget.currentLang == 'en' ? 'हिन्दी' : 'English'),
           ),
         ],
         bottom: TabBar(
           controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          indicatorColor: Colors.white,
           tabs: [
             Tab(text: t['day']),
             Tab(text: t['week']),
@@ -330,65 +570,46 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       body: TabBarView(
         controller: _tabController,
         children: [
-          buildTransactionView(getFilteredTransactions(0), t),
-          buildTransactionView(getFilteredTransactions(1), t),
-          buildTransactionView(getFilteredTransactions(2), t),
+          buildView(getFilteredTransactions(0), t),
+          buildView(getFilteredTransactions(1), t),
+          buildView(getFilteredTransactions(2), t),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: addSampleTransaction,
-        icon: const Icon(Icons.add),
-        label: Text(t['add']!),
       ),
     );
   }
 
-  Widget buildTransactionView(List<TransactionItem> transactions, Map<String, String> t) {
-    double totalSpent = calculateTotal(transactions);
-
+  Widget buildView(List<TransactionItem> txList, Map<String, String> t) {
+    double total = calculateTotal(txList);
     return Column(
       children: [
         Container(
-          width: double.infinity,
           margin: const EdgeInsets.all(12),
           padding: const EdgeInsets.all(16),
+          width: double.infinity,
           decoration: BoxDecoration(
-            color: widget.currentThemeColor.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: widget.currentThemeColor.shade200),
+            color: Colors.blue.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
-            t['totalSpent']! + totalSpent.toStringAsFixed(2),
+            t['totalSpent']! + total.toStringAsFixed(2),
             textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: widget.currentThemeColor.shade700,
-            ),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
         ),
         Expanded(
-          child: transactions.isEmpty
-              ? Center(
-                  child: Text(
-                    t['empty']!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                )
+          child: txList.isEmpty
+              ? Center(child: Text(t['empty']!, style: const TextStyle(color: Colors.grey)))
               : ListView.builder(
-                  itemCount: transactions.length,
+                  itemCount: txList.length,
                   itemBuilder: (context, index) {
-                    final tx = transactions[index];
+                    final tx = txList[index];
+                    DateTime dt = DateTime.parse(tx.dateStr);
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       child: ListTile(
-                        leading: Icon(Icons.account_balance_wallet, color: widget.currentThemeColor),
-                        title: Text(tx.message, maxLines: 3, overflow: TextOverflow.ellipsis),
-                        subtitle: Text(
-                          "Amount: Rs. ${tx.amount} | Date: ${tx.date.day}/${tx.date.month}/${tx.date.year}",
-                          style: const TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
+                        leading: const Icon(Icons.account_balance_wallet, color: Colors.blue),
+                        title: Text(tx.message, maxLines: 2, overflow: TextOverflow.ellipsis),
+                        subtitle: Text("Rs. ${tx.amount} | Date: ${dt.day}/${dt.month}/${dt.year}"),
                       ),
                     );
                   },
