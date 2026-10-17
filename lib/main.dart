@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:telephony/telephony.dart';
+import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
@@ -25,6 +26,7 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
   void initState() {
     super.initState();
     checkLoginStatus();
+    loadThemeSetting();
   }
 
   void checkLoginStatus() async {
@@ -35,9 +37,13 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
     });
   }
 
-  void toggleLanguage() {
+  void loadThemeSetting() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? savedTheme = prefs.getString('themeMode');
     setState(() {
-      currentLang = currentLang == 'en' ? 'hi' : 'en';
+      if (savedTheme == 'dark') themeMode = ThemeMode.dark;
+      else if (savedTheme == 'light') themeMode = ThemeMode.light;
+      else themeMode = ThemeMode.system;
     });
   }
 
@@ -47,6 +53,12 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
     });
     SharedPreferences prefs = await SharedPreferences.getInstance();
     prefs.setString('themeMode', mode == ThemeMode.dark ? 'dark' : (mode == ThemeMode.light ? 'light' : 'system'));
+  }
+
+  void toggleLanguage() {
+    setState(() {
+      currentLang = currentLang == 'en' ? 'hi' : 'en';
+    });
   }
 
   @override
@@ -86,7 +98,7 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
   }
 }
 
-// --- MOBILE NUMBER LOGIN SCREEN ---
+// --- LOGIN SCREEN ---
 class LoginScreen extends StatefulWidget {
   final VoidCallback onLoginSuccess;
   final String currentLang;
@@ -140,7 +152,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 10),
             Text(
-              isEn ? 'Enter your mobile number to auto-detect UPI SMS' : 'यूपीआई एसएमएस स्वतः पढ़ने के लिए अपना मोबाइल नंबर दर्ज करें',
+              isEn ? 'Enter mobile number to view SMS expenses' : 'एसएमएस खर्च देखने के लिए मोबाइल नंबर दर्ज करें',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.grey),
             ),
@@ -162,8 +174,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: ElevatedButton(
                 onPressed: handleLogin,
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
-                textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                child: Text(isEn ? 'Continue' : 'आगे बढ़ें'),
+                child: Text(isEn ? 'Continue' : 'आगे बढ़ें', style: const TextStyle(fontSize: 16)),
               ),
             ),
           ],
@@ -231,7 +242,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
             const Icon(Icons.lock, size: 60, color: Colors.blueAccent),
             const SizedBox(height: 20),
             Text(
-              widget.currentLang == 'en' ? 'Enter 4-Digit PIN (Default: 1234)' : '4-अंकों का पिन दर्ज करें',
+              widget.currentLang == 'en' ? 'Enter 4-Digit PIN (Default: 1234)' : '4-अंकों का पिन दर्ज करें (Default: 1234)',
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 20),
@@ -281,6 +292,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
   }
 }
 
+// --- DATA MODEL ---
 class TransactionItem {
   final String message;
   final double amount;
@@ -299,6 +311,7 @@ class TransactionItem {
   }
 }
 
+// --- MAIN HOME SCREEN ---
 class HomeScreen extends StatefulWidget {
   final String currentLang;
   final VoidCallback onToggleLanguage;
@@ -322,9 +335,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
-  final Telephony telephony = Telephony.instance;
+  final SmsQuery _smsQuery = SmsQuery();
   List<TransactionItem> allTransactions = [];
   late TabController _tabController;
+  bool isLoading = false;
 
   final Map<String, Map<String, String>> localizedText = {
     'en': {
@@ -332,24 +346,26 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'day': 'Day',
       'week': 'Week',
       'month': 'Month',
-      'empty': 'No UPI transactions found.',
+      'empty': 'No UPI transactions found. Pull down or tap Refresh.',
       'totalSpent': 'Total Spent: Rs. ',
       'settings': 'Settings',
       'changePin': 'Change PIN',
       'themeTitle': 'Theme Mode',
       'logout': 'Logout',
+      'refresh': 'Sync SMS',
     },
     'hi': {
       'title': 'यूपीआई खर्च ट्रैकर',
       'day': 'दिन',
       'week': 'हफ्ता',
       'month': 'महीना',
-      'empty': 'कोई यूपीआई लेन-देन नहीं मिला।',
+      'empty': 'कोई यूपीआई लेन-देन नहीं मिला। Sync SMS पर टैप करें।',
       'totalSpent': 'कुल खर्चा: रु. ',
       'settings': 'सेटिंग्स',
       'changePin': 'पिन बदलें',
       'themeTitle': 'थीम मोड',
       'logout': 'लॉग आउट',
+      'refresh': 'एसएमएस सिंक करें',
     },
   };
 
@@ -358,7 +374,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     loadSavedTransactions();
-    initSmsListener();
+    fetchAndParseSms();
   }
 
   void loadSavedTransactions() async {
@@ -378,38 +394,39 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     prefs.setString('transactions_list', encoded);
   }
 
-  void initSmsListener() async {
-    bool? permissionsGranted = await telephony.requestPhoneAndSmsPermissions;
-    if (permissionsGranted ?? false) {
-      telephony.listenIncomingSms(
-        onNewMessage: (SmsMessage message) {
-          processSms(message.body ?? "");
-        },
-        listenInBackground: true,
+  // --- READ SMS INBOX WITHOUT TELEPHONY PLUGIN ---
+  Future<void> fetchAndParseSms() async {
+    setState(() => isLoading = true);
+    var status = await Permission.sms.request();
+    if (status.isGranted) {
+      List<SmsMessage> messages = await _smsQuery.querySms(
+        kinds: [SmsQueryKind.inbox],
       );
 
-      List<SmsMessage> messages = await telephony.getInboxMessages(columns: [SmsColumn.BODY, SmsColumn.DATE]);
+      bool hasNew = false;
       for (var msg in messages) {
-        processSms(msg.body ?? "");
-      }
-    }
-  }
-
-  void processSms(String body) {
-    String lower = body.toLowerCase();
-    if (lower.contains('debited') || lower.contains('spent') || lower.contains('paid') || lower.contains('sent')) {
-      double amt = extractAmount(body);
-      if (amt > 0) {
-        String todayDate = DateTime.now().toIso8601String();
-        bool exists = allTransactions.any((tx) => tx.message == body);
-        if (!exists) {
-          setState(() {
-            allTransactions.insert(0, TransactionItem(message: body, amount: amt, dateStr: todayDate));
-          });
-          saveTransactionsToDisk();
+        String body = msg.body ?? "";
+        String lower = body.toLowerCase();
+        
+        if (lower.contains('debited') || lower.contains('spent') || lower.contains('paid') || lower.contains('sent')) {
+          double amt = extractAmount(body);
+          if (amt > 0) {
+            String msgDate = msg.date != null ? msg.date!.toIso8601String() : DateTime.now().toIso8601String();
+            bool exists = allTransactions.any((tx) => tx.message == body);
+            if (!exists) {
+              allTransactions.add(TransactionItem(message: body, amount: amt, dateStr: msgDate));
+              hasNew = true;
+            }
+          }
         }
       }
+
+      if (hasNew) {
+        allTransactions.sort((a, b) => DateTime.parse(b.dateStr).compareTo(DateTime.parse(a.dateStr)));
+        saveTransactionsToDisk();
+      }
     }
+    setState(() => isLoading = false);
   }
 
   double extractAmount(String text) {
@@ -545,6 +562,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         title: Text(t['title']!),
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: fetchAndParseSms,
+            tooltip: t['refresh'],
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             onPressed: showSettingsDialog,
           ),
@@ -567,14 +589,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          buildView(getFilteredTransactions(0), t),
-          buildView(getFilteredTransactions(1), t),
-          buildView(getFilteredTransactions(2), t),
-        ],
-      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tabController,
+              children: [
+                buildView(getFilteredTransactions(0), t),
+                buildView(getFilteredTransactions(1), t),
+                buildView(getFilteredTransactions(2), t),
+              ],
+            ),
     );
   }
 
