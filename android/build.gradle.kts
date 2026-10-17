@@ -23,12 +23,11 @@ tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
 subprojects {
-    afterEvaluate { project ->
-        if (project.hasProperty('android')) {
-            project.android {
-                if (namespace == null) {
-                    namespace project.group
-                }
+    afterEvaluate {
+        if (plugins.hasPlugin("com.android.library")) {
+            val android = extensions.findByName("android") as? com.android.build.gradle.LibraryExtension
+            if (android != null && android.namespace == null) {
+                android.namespace = "com.telephony.fix"
             }
         }
     }
