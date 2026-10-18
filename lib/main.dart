@@ -1,10 +1,3 @@
-Aapke kehne par humne app mein **Year (साल)** ka tab bhi add kar diya hai!
-
-Ab aap app mein **Day (दिन), Week (हफ्ता), Month (महीना), aur Year (साल)** — in charo intervals ke hisab se apna kul kharcha aur saari transactions aasani se dekh sakte hain.
-
-Yahan aapke liye **complete updated `lib/main.dart` code** hai:
-
-```dart
 import 'package:flutter/material.dart';
 import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -205,6 +198,7 @@ class PinLockScreen extends StatefulWidget {
 class _PinLockScreenState extends State<PinLockScreen> {
   String enteredPin = "";
   String savedPin = "1234";
+  bool isCustomPinSet = false;
 
   @override
   void initState() {
@@ -214,8 +208,15 @@ class _PinLockScreenState extends State<PinLockScreen> {
 
   void loadSavedPin() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? userPin = prefs.getString('user_pin');
     setState(() {
-      savedPin = prefs.getString('user_pin') ?? "1234";
+      if (userPin != null && userPin.isNotEmpty) {
+        savedPin = userPin;
+        isCustomPinSet = true;
+      } else {
+        savedPin = "1234";
+        isCustomPinSet = false;
+      }
     });
   }
 
@@ -241,6 +242,10 @@ class _PinLockScreenState extends State<PinLockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    String subTitle = widget.currentLang == 'en' 
+        ? (isCustomPinSet ? 'Enter 4-Digit Security PIN' : 'Enter 4-Digit PIN (Default: 1234)')
+        : (isCustomPinSet ? '4-अंकों का सुरक्षा पिन दर्ज करें' : '4-अंकों का पिन दर्ज करें (Default: 1234)');
+
     return Scaffold(
       body: Center(
         child: Column(
@@ -249,7 +254,7 @@ class _PinLockScreenState extends State<PinLockScreen> {
             const Icon(Icons.lock, size: 60, color: Colors.blueAccent),
             const SizedBox(height: 20),
             Text(
-              widget.currentLang == 'en' ? 'Enter 4-Digit PIN (Default: 1234)' : '4-अंकों का पिन दर्ज करें (Default: 1234)',
+              subTitle,
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 20),
@@ -304,16 +309,23 @@ class TransactionItem {
   final String message;
   final double amount;
   final String dateStr;
+  final String category;
 
-  TransactionItem({required this.message, required this.amount, required this.dateStr});
+  TransactionItem({required this.message, required this.amount, required this.dateStr, this.category = 'Other'});
 
-  Map<String, dynamic> toJson() => {'message': message, 'amount': amount, 'dateStr': dateStr};
+  Map<String, dynamic> toJson() => {
+    'message': message, 
+    'amount': amount, 
+    'dateStr': dateStr,
+    'category': category
+  };
 
   factory TransactionItem.fromJson(Map<String, dynamic> json) {
     return TransactionItem(
       message: json['message'],
       amount: json['amount'],
       dateStr: json['dateStr'],
+      category: json['category'] ?? 'Other',
     );
   }
 }
@@ -346,6 +358,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   List<TransactionItem> allTransactions = [];
   late TabController _tabController;
   bool isLoading = false;
+  double monthlyBudget = 10000.0;
 
   final Map<String, Map<String, String>> localizedText = {
     'en': {
@@ -354,13 +367,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'week': 'Week',
       'month': 'Month',
       'year': 'Year',
-      'empty': 'No UPI transactions found. Pull down or tap Refresh.',
+      'empty': 'No UPI transactions found.',
       'totalSpent': 'Total Spent: Rs. ',
       'settings': 'Settings',
       'changePin': 'Change PIN',
       'themeTitle': 'Theme Mode',
       'logout': 'Logout',
       'refresh': 'Sync SMS',
+      'addManual': 'Add Manual Expense',
+      'budget': 'Monthly Budget',
+      'setBudget': 'Set Budget Limit',
+      'export': 'Export to CSV',
     },
     'hi': {
       'title': 'यूपीआई खर्च ट्रैकर',
@@ -368,13 +385,17 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'week': 'हफ्ता',
       'month': 'महीना',
       'year': 'साल',
-      'empty': 'कोई यूपीआई लेन-देन नहीं मिला। Sync SMS पर टैप करें।',
+      'empty': 'कोई यूपीआई लेन-देन नहीं मिला।',
       'totalSpent': 'कुल खर्चा: रु. ',
       'settings': 'सेटिंग्स',
       'changePin': 'पिन बदलें',
       'themeTitle': 'थीम मोड',
       'logout': 'लॉग आउट',
       'refresh': 'एसएमएस सिंक करें',
+      'addManual': 'मैन्युअल खर्च जोड़ें',
+      'budget': 'मासिक बजट',
+      'setBudget': 'बजट सेट करें',
+      'export': 'CSV में एक्सपोर्ट करें',
     },
   };
 
@@ -384,6 +405,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 4, vsync: this);
     loadSavedTransactions();
+    loadBudget();
     fetchAndParseSms();
   }
 
@@ -401,6 +423,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
+  void loadBudget() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      monthlyBudget = prefs.getDouble('monthly_budget') ?? 10000.0;
+    });
+  }
+
   void loadSavedTransactions() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String? dataString = prefs.getString('transactions_list');
@@ -416,6 +445,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     SharedPreferences prefs = await SharedPreferences.getInstance();
     String encoded = jsonEncode(allTransactions.map((tx) => tx.toJson()).toList());
     prefs.setString('transactions_list', encoded);
+  }
+
+  String detectCategory(String body) {
+    String lower = body.toLowerCase();
+    if (lower.contains('swiggy') || lower.contains('zomato') || lower.contains('food') || lower.contains('restaurant')) return 'Food';
+    if (lower.contains('recharge') || lower.contains('bill') || lower.contains('electricity') || lower.contains('jio') || lower.contains('airtel')) return 'Bills';
+    if (lower.contains('amazon') || lower.contains('flipkart') || lower.contains('mart') || lower.contains('shop')) return 'Shopping';
+    if (lower.contains('uber') || lower.contains('ola') || lower.contains('rapido') || lower.contains('petrol') || lower.contains('fuel')) return 'Transport';
+    return 'Other';
   }
 
   Future<void> fetchAndParseSms() async {
@@ -446,7 +484,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             String msgDate = msg.date != null ? msg.date!.toIso8601String() : DateTime.now().toIso8601String();
             bool exists = allTransactions.any((tx) => tx.message == body);
             if (!exists) {
-              allTransactions.add(TransactionItem(message: body, amount: amt, dateStr: msgDate));
+              String cat = detectCategory(body);
+              allTransactions.add(TransactionItem(message: body, amount: amt, dateStr: msgDate, category: cat));
               hasNew = true;
             }
           }
@@ -474,6 +513,95 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return 0.0;
   }
 
+  void showManualAddDialog() {
+    TextEditingController titleController = TextEditingController();
+    TextEditingController amountController = TextEditingController();
+    String selectedCategory = 'Other';
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(widget.currentLang == 'en' ? 'Add Manual Expense' : 'मैन्युअल खर्च जोड़ें'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Title / Note')),
+                  TextField(controller: amountController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount (Rs.)')),
+                  DropdownButton<String>(
+                    value: selectedCategory,
+                    isExpanded: true,
+                    items: ['Food', 'Bills', 'Shopping', 'Transport', 'Other'].map((cat) {
+                      return DropdownMenuItem(value: cat, child: Text(cat));
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) setDialogState(() => selectedCategory = val);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                ElevatedButton(
+                  onPressed: () {
+                    double? amt = double.tryParse(amountController.text);
+                    if (amt != null && amt > 0 && titleController.text.isNotEmpty) {
+                      setState(() {
+                        allTransactions.insert(0, TransactionItem(
+                          message: "Manual: ${titleController.text}",
+                          amount: amt,
+                          dateStr: DateTime.now().toIso8601String(),
+                          category: selectedCategory,
+                        ));
+                        saveTransactionsToDisk();
+                      });
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void showBudgetDialog() {
+    TextEditingController budgetController = TextEditingController(text: monthlyBudget.toString());
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(widget.currentLang == 'en' ? 'Set Monthly Budget' : 'मासिक बजट सेट करें'),
+          content: TextField(
+            controller: budgetController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Budget Amount (Rs.)'),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () async {
+                double? b = double.tryParse(budgetController.text);
+                if (b != null && b > 0) {
+                  SharedPreferences prefs = await SharedPreferences.getInstance();
+                  prefs.setDouble('monthly_budget', b);
+                  setState(() => monthlyBudget = b);
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Save'),
+            )
+          ],
+        );
+      },
+    );
+  }
+
   void showChangePinDialog() {
     TextEditingController oldPinController = TextEditingController();
     TextEditingController newPinController = TextEditingController();
@@ -484,7 +612,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         return AlertDialog(
           title: Text(widget.currentLang == 'en' ? 'Change PIN' : 'पिन बदलें'),
           content: Column(
-            mainAxisSize: MinAxisSize.min,
+            mainAxisSize: MainAxisSize.min,
             children: [
               TextField(controller: oldPinController, decoration: const InputDecoration(hintText: 'Old PIN'), obscureText: true),
               TextField(controller: newPinController, decoration: const InputDecoration(hintText: 'New 4-Digit PIN'), obscureText: true, maxLength: 4),
@@ -512,6 +640,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
+  void exportToCsv() {
+    String csv = "Date,Amount,Category,Message\n";
+    for (var tx in allTransactions) {
+      csv += "${tx.dateStr},${tx.amount},${tx.category},\"${tx.message}\"\n";
+    }
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("CSV Data Export"),
+        content: SingleChildScrollView(child: SelectableText(csv)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
+        ],
+      ),
+    );
+  }
+
   void showSettingsDialog() {
     var t = localizedText[widget.currentLang]!;
     showDialog(
@@ -528,6 +673,22 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 onTap: () {
                   Navigator.pop(context);
                   showChangePinDialog();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.account_balance_wallet_outlined),
+                title: Text(t['setBudget']!),
+                onTap: () {
+                  Navigator.pop(context);
+                  showBudgetDialog();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.download),
+                title: Text(t['export']!),
+                onTap: () {
+                  Navigator.pop(context);
+                  exportToCsv();
                 },
               ),
               ListTile(
@@ -570,16 +731,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return allTransactions.where((tx) {
       DateTime txDate = DateTime.parse(tx.dateStr);
       if (tabIndex == 0) {
-        // Day Filter
         return txDate.year == now.year && txDate.month == now.month && txDate.day == now.day;
       } else if (tabIndex == 1) {
-        // Week Filter
         return now.difference(txDate).inDays <= 7;
       } else if (tabIndex == 2) {
-        // Month Filter
         return txDate.year == now.year && txDate.month == now.month;
       } else {
-        // Year Filter
         return txDate.year == now.year;
       }
     }).toList();
@@ -630,22 +787,29 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           ],
         ),
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: showManualAddDialog,
+        tooltip: t['addManual'],
+        child: const Icon(Icons.add),
+      ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : TabBarView(
               controller: _tabController,
               children: [
-                buildView(getFilteredTransactions(0), t),
-                buildView(getFilteredTransactions(1), t),
-                buildView(getFilteredTransactions(2), t),
-                buildView(getFilteredTransactions(3), t),
+                buildView(getFilteredTransactions(0), t, isMonth: false),
+                buildView(getFilteredTransactions(1), t, isMonth: false),
+                buildView(getFilteredTransactions(2), t, isMonth: true),
+                buildView(getFilteredTransactions(3), t, isMonth: false),
               ],
             ),
     );
   }
 
-  Widget buildView(List<TransactionItem> txList, Map<String, String> t) {
+  Widget buildView(List<TransactionItem> txList, Map<String, String> t, {required bool isMonth}) {
     double total = calculateTotal(txList);
+    bool overBudget = isMonth && (total > monthlyBudget);
+
     return Column(
       children: [
         Container(
@@ -653,13 +817,35 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           padding: const EdgeInsets.all(16),
           width: double.infinity,
           decoration: BoxDecoration(
-            color: Colors.blue.withOpacity(0.1),
+            color: overBudget ? Colors.red.withOpacity(0.15) : Colors.blue.withOpacity(0.1),
             borderRadius: BorderRadius.circular(10),
+            border: overBudget ? Border.all(color: Colors.red, width: 1.5) : null,
           ),
-          child: Text(
-            t['totalSpent']! + total.toStringAsFixed(2),
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          child: Column(
+            children: [
+              Text(
+                t['totalSpent']! + total.toStringAsFixed(2),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 18, 
+                  fontWeight: FontWeight.bold,
+                  color: overBudget ? Colors.red : null,
+                ),
+              ),
+              if (isMonth) ...[
+                const SizedBox(height: 6),
+                Text(
+                  overBudget 
+                    ? "Warning: Monthly Budget Exceeded! (Limit: Rs. ${monthlyBudget.toStringAsFixed(0)})"
+                    : "Monthly Budget Limit: Rs. ${monthlyBudget.toStringAsFixed(0)}",
+                  style: TextStyle(
+                    fontSize: 12, 
+                    color: overBudget ? Colors.red : Colors.grey,
+                    fontWeight: overBudget ? FontWeight.bold : FontWeight.normal
+                  ),
+                )
+              ]
+            ],
           ),
         ),
         Expanded(
@@ -673,9 +859,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     return Card(
                       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       child: ListTile(
-                        leading: const Icon(Icons.account_balance_wallet, color: Colors.blue),
+                        leading: CircleAvatar(
+                          child: Text(tx.category[0]),
+                        ),
                         title: Text(tx.message, maxLines: 2, overflow: TextOverflow.ellipsis),
-                        subtitle: Text("Rs. ${tx.amount} | Date: ${dt.day}/${dt.month}/${dt.year}"),
+                        subtitle: Text("Rs. ${tx.amount} | Cat: ${tx.category} | ${dt.day}/${dt.month}/${dt.year}"),
                       ),
                     );
                   },
@@ -685,5 +873,3 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 }
-
-```
