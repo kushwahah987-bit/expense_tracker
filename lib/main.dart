@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_sms_inbox/flutter_sms_inbox.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:convert';
+import 'dart:io';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -310,14 +313,22 @@ class TransactionItem {
   final double amount;
   final String dateStr;
   final String category;
+  final String source; // 'SMS' or 'Notification'
 
-  TransactionItem({required this.message, required this.amount, required this.dateStr, this.category = 'Other'});
+  TransactionItem({
+    required this.message, 
+    required this.amount, 
+    required this.dateStr, 
+    this.category = 'Other',
+    this.source = 'SMS',
+  });
 
   Map<String, dynamic> toJson() => {
     'message': message, 
     'amount': amount, 
     'dateStr': dateStr,
-    'category': category
+    'category': category,
+    'source': source,
   };
 
   factory TransactionItem.fromJson(Map<String, dynamic> json) {
@@ -326,6 +337,7 @@ class TransactionItem {
       amount: json['amount'],
       dateStr: json['dateStr'],
       category: json['category'] ?? 'Other',
+      source: json['source'] ?? 'SMS',
     );
   }
 }
@@ -359,6 +371,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   late TabController _tabController;
   bool isLoading = false;
   double monthlyBudget = 10000.0;
+  int selectedYear = DateTime.now().year;
+
+  final List<String> monthNamesEn = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  final List<String> monthNamesHi = ['जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुलाई', 'अगस्त', 'सितंबर', 'अक्टूबर', 'नवंबर', 'दिसंबर'];
 
   final Map<String, Map<String, String>> localizedText = {
     'en': {
@@ -366,36 +382,38 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'day': 'Day',
       'week': 'Week',
       'month': 'Month',
-      'year': 'Year',
+      'year': 'Year Wise',
       'empty': 'No UPI transactions found.',
       'totalSpent': 'Total Spent: Rs. ',
       'settings': 'Settings',
       'changePin': 'Change PIN',
       'themeTitle': 'Theme Mode',
       'logout': 'Logout',
-      'refresh': 'Sync SMS',
+      'refresh': 'Sync Data',
       'addManual': 'Add Manual Expense',
       'budget': 'Monthly Budget',
       'setBudget': 'Set Budget Limit',
-      'export': 'Export to CSV',
+      'exportCsv': 'Save & Share CSV',
+      'exportPdf': 'Save & Share PDF',
     },
     'hi': {
       'title': 'यूपीआई खर्च ट्रैकर',
       'day': 'दिन',
       'week': 'हफ्ता',
       'month': 'महीना',
-      'year': 'साल',
+      'year': 'साल अनुसार',
       'empty': 'कोई यूपीआई लेन-देन नहीं मिला।',
       'totalSpent': 'कुल खर्चा: रु. ',
       'settings': 'सेटिंग्स',
       'changePin': 'पिन बदलें',
       'themeTitle': 'थीम मोड',
       'logout': 'लॉग आउट',
-      'refresh': 'एसएमएस सिंक करें',
+      'refresh': 'डाटा सिंक करें',
       'addManual': 'मैन्युअल खर्च जोड़ें',
       'budget': 'मासिक बजट',
       'setBudget': 'बजट सेट करें',
-      'export': 'CSV में एक्सपोर्ट करें',
+      'exportCsv': 'CSV सेव और शेयर करें',
+      'exportPdf': 'PDF सेव और शेयर करें',
     },
   };
 
@@ -485,7 +503,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             bool exists = allTransactions.any((tx) => tx.message == body);
             if (!exists) {
               String cat = detectCategory(body);
-              allTransactions.add(TransactionItem(message: body, amount: amt, dateStr: msgDate, category: cat));
+              allTransactions.add(TransactionItem(message: body, amount: amt, dateStr: msgDate, category: cat, source: 'SMS'));
               hasNew = true;
             }
           }
@@ -511,6 +529,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
     } catch (_) {}
     return 0.0;
+  }
+
+  // --- SAVE & SHARE CSV FILE ---
+  Future<void> exportAndSaveCsv() async {
+    String csvData = "Date,Amount,Category,Source,Message\n";
+    for (var tx in allTransactions) {
+      csvData += "${tx.dateStr},${tx.amount},${tx.category},${tx.source},\"${tx.message.replaceAll('"', '""')}\"\n";
+    }
+
+    final directory = await getApplicationDocumentsDirectory();
+    final path = "${directory.path}/UPI_Expenses_Report.csv";
+    final file = File(path);
+    await file.writeAsString(csvData);
+
+    await Share.shareXFiles([XFile(path)], text: 'My UPI Expenses CSV Report');
   }
 
   void showManualAddDialog() {
@@ -554,6 +587,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           amount: amt,
                           dateStr: DateTime.now().toIso8601String(),
                           category: selectedCategory,
+                          source: 'Manual',
                         ));
                         saveTransactionsToDisk();
                       });
@@ -640,23 +674,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  void exportToCsv() {
-    String csv = "Date,Amount,Category,Message\n";
-    for (var tx in allTransactions) {
-      csv += "${tx.dateStr},${tx.amount},${tx.category},\"${tx.message}\"\n";
-    }
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("CSV Data Export"),
-        content: SingleChildScrollView(child: SelectableText(csv)),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Close")),
-        ],
-      ),
-    );
-  }
-
   void showSettingsDialog() {
     var t = localizedText[widget.currentLang]!;
     showDialog(
@@ -684,11 +701,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.download),
-                title: Text(t['export']!),
+                leading: const Icon(Icons.file_download),
+                title: Text(t['exportCsv']!),
                 onTap: () {
                   Navigator.pop(context);
-                  exportToCsv();
+                  exportAndSaveCsv();
                 },
               ),
               ListTile(
@@ -737,7 +754,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       } else if (tabIndex == 2) {
         return txDate.year == now.year && txDate.month == now.month;
       } else {
-        return txDate.year == now.year;
+        return true;
       }
     }).toList();
   }
@@ -748,6 +765,76 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       total += item.amount;
     }
     return total;
+  }
+
+  // --- DETAILED MONTH & DATE BREAKDOWN FOR YEAR TAB ---
+  Widget buildYearlyBreakdownView(Map<String, String> t) {
+    List<int> availableYears = [2024, 2025, 2026];
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                widget.currentLang == 'en' ? "Select Year:" : "साल चुनें:",
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              DropdownButton<int>(
+                value: selectedYear,
+                items: availableYears.map((y) {
+                  return DropdownMenuItem(value: y, child: Text(y.toString()));
+                }).toList(),
+                onChanged: (val) {
+                  if (val != null) setState(() => selectedYear = val);
+                },
+              )
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: 12,
+            itemBuilder: (context, monthIndex) {
+              int monthNum = monthIndex + 1;
+              List<TransactionItem> monthTx = allTransactions.where((tx) {
+                DateTime dt = DateTime.parse(tx.dateStr);
+                return dt.year == selectedYear && dt.month == monthNum;
+              }).toList();
+
+              double monthTotal = calculateTotal(monthTx);
+              String monthLabel = widget.currentLang == 'en' ? monthNamesEn[monthIndex] : monthNamesHi[monthIndex];
+
+              return ExpansionTile(
+                leading: CircleAvatar(
+                  backgroundColor: monthTx.isEmpty ? Colors.grey.shade300 : Colors.blue.shade100,
+                  child: Text("${monthNum}"),
+                ),
+                title: Text(monthLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text("Total: Rs. ${monthTotal.toStringAsFixed(2)} | (${monthTx.length} Transactions)"),
+                children: monthTx.isEmpty
+                    ? [const ListTile(title: Text("No transactions in this month", style: TextStyle(color: Colors.grey)))]
+                    : monthTx.map((tx) {
+                        DateTime dt = DateTime.parse(tx.dateStr);
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            tx.source == 'Notification' ? Icons.notifications : Icons.sms,
+                            color: Colors.blueAccent,
+                          ),
+                          title: Text(tx.message, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text("Date: ${dt.day}/${dt.month}/${dt.year} | Category: ${tx.category}"),
+                          trailing: Text("Rs. ${tx.amount}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                        );
+                      }).toList(),
+              );
+            },
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -800,7 +887,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 buildView(getFilteredTransactions(0), t, isMonth: false),
                 buildView(getFilteredTransactions(1), t, isMonth: false),
                 buildView(getFilteredTransactions(2), t, isMonth: true),
-                buildView(getFilteredTransactions(3), t, isMonth: false),
+                buildYearlyBreakdownView(t),
               ],
             ),
     );
