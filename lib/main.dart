@@ -313,7 +313,7 @@ class TransactionItem {
   final double amount;
   final String dateStr;
   final String category;
-  final String source; // 'SMS' or 'Notification'
+  final String source;
 
   TransactionItem({
     required this.message, 
@@ -394,7 +394,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'budget': 'Monthly Budget',
       'setBudget': 'Set Budget Limit',
       'exportCsv': 'Save & Share CSV',
-      'exportPdf': 'Save & Share PDF',
+      'byTxnId': 'By Transaction ID',
     },
     'hi': {
       'title': 'यूपीआई खर्च ट्रैकर',
@@ -413,7 +413,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       'budget': 'मासिक बजट',
       'setBudget': 'बजट सेट करें',
       'exportCsv': 'CSV सेव और शेयर करें',
-      'exportPdf': 'PDF सेव और शेयर करें',
+      'byTxnId': 'ट्रांजेक्शन ID अनुसार',
     },
   };
 
@@ -474,6 +474,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return 'Other';
   }
 
+  String extractMerchantOrUpiId(String message) {
+    RegExp vpaRegex = RegExp(r'([a-zA-Z0-9.\-_]+@[a-zA-Z0-9]+)', caseSensitive: false);
+    Match? vpaMatch = vpaRegex.firstMatch(message);
+    if (vpaMatch != null) {
+      return vpaMatch.group(1)!;
+    }
+
+    RegExp toRegex = RegExp(r'(?:to|at|vpa)\s+([a-zA-Z0-9\s._\-]+?)(?=\s+on|\s+ref|\s+txn|\s+via|\.|$)', caseSensitive: false);
+    Match? toMatch = toRegex.firstMatch(message);
+    if (toMatch != null && toMatch.group(1) != null) {
+      String foundName = toMatch.group(1)!.trim();
+      if (foundName.length > 2 && foundName.length < 30) {
+        return foundName;
+      }
+    }
+
+    return "General UPI / Merchant";
+  }
+
   Future<void> fetchAndParseSms() async {
     if (!mounted) return;
     setState(() => isLoading = true);
@@ -531,7 +550,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return 0.0;
   }
 
-  // --- SAVE & SHARE CSV FILE ---
   Future<void> exportAndSaveCsv() async {
     String csvData = "Date,Amount,Category,Source,Message\n";
     for (var tx in allTransactions) {
@@ -544,6 +562,99 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     await file.writeAsString(csvData);
 
     await Share.shareXFiles([XFile(path)], text: 'My UPI Expenses CSV Report');
+  }
+
+  void showTransactionIdPopup() {
+    Map<String, List<TransactionItem>> groupedData = {};
+
+    for (var tx in allTransactions) {
+      String idOrMerchant = extractMerchantOrUpiId(tx.message);
+      if (!groupedData.containsKey(idOrMerchant)) {
+        groupedData[idOrMerchant] = [];
+      }
+      groupedData[idOrMerchant]!.add(tx);
+    }
+
+    var sortedEntries = groupedData.entries.toList()
+      ..sort((a, b) {
+        double sumA = a.value.fold(0, (prev, element) => prev + element.amount);
+        double sumB = b.value.fold(0, (prev, element) => prev + element.amount);
+        return sumB.compareTo(sumA);
+      });
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.receipt_long, color: Colors.blueAccent),
+              const SizedBox(width: 8),
+              Text(widget.currentLang == 'en' ? 'Transactions by ID / Merchant' : 'UPI ID / मर्चेंट अनुसार खर्च'),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: sortedEntries.isEmpty
+                ? Center(
+                    child: Text(
+                      widget.currentLang == 'en' ? 'No transactions found.' : 'कोई लेन-देन नहीं मिला।',
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: sortedEntries.length,
+                    itemBuilder: (context, index) {
+                      var entry = sortedEntries[index];
+                      String upiId = entry.key;
+                      List<TransactionItem> items = entry.value;
+                      int count = items.length;
+                      double totalAmount = items.fold(0, (sum, item) => sum + item.amount);
+
+                      return ExpansionTile(
+                        leading: CircleAvatar(
+                          backgroundColor: count > 3 ? Colors.orange.shade100 : Colors.blue.shade100,
+                          child: Text(
+                            "$count",
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: count > 3 ? Colors.orange.shade900 : Colors.blue.shade900,
+                            ),
+                          ),
+                        ),
+                        title: Text(
+                          upiId,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          "Total: Rs. ${totalAmount.toStringAsFixed(2)} | ($count Transactions)",
+                          style: TextStyle(fontSize: 12, color: count > 3 ? Colors.orange.shade800 : Colors.grey.shade700),
+                        ),
+                        children: items.map((tx) {
+                          DateTime dt = DateTime.parse(tx.dateStr);
+                          return ListTile(
+                            dense: true,
+                            title: Text(tx.message, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                            subtitle: Text("Date: ${dt.day}/${dt.month}/${dt.year}"),
+                            trailing: Text("Rs. ${tx.amount}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(widget.currentLang == 'en' ? 'Close' : 'बंद करें'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void showManualAddDialog() {
@@ -767,7 +878,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     return total;
   }
 
-  // --- DETAILED MONTH & DATE BREAKDOWN FOR YEAR TAB ---
   Widget buildYearlyBreakdownView(Map<String, String> t) {
     List<int> availableYears = [2024, 2025, 2026];
 
@@ -845,6 +955,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       appBar: AppBar(
         title: Text(t['title']!),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.receipt_long),
+            onPressed: showTransactionIdPopup,
+            tooltip: t['byTxnId'],
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: fetchAndParseSms,
